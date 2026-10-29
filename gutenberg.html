@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Markup Studio — Gutenberg Editor</title>
+  <link rel="stylesheet" href="gutenberg.css">
+  <script defer src="gutenberg-core.js"></script>
+  <script defer src="gutenberg.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark">m.</span><div><strong>Markup Studio <span class="badge">Gutenberg</span></strong><small>Custom HTML blocks · Text editing</small></div></div>
+    <div class="actions">
+      <input id="filename" aria-label="File name" value="wordpress-page.html">
+      <button id="open">Open source</button><button id="paste">Paste source</button>
+      <button id="save">Save in browser</button><button id="export" class="primary">Export Gutenberg source</button>
+    </div>
+  </header>
+  <div class="toolbar">
+    <a href="editors.html">← Choose editor</a>
+    <div class="actions"><button id="undo" disabled>Undo</button><button id="redo" disabled>Redo</button><button id="restore">Restore original</button><button id="backup">Download original</button></div>
+  </div>
+  <main>
+    <aside class="blocks"><h2>Gutenberg blocks</h2><p class="help">Select a Custom HTML block, then click text in the preview. Other block types stay read-only.</p><nav id="blocks" aria-label="Gutenberg blocks"></nav></aside>
+    <section class="center">
+      <div class="viewbar"><div class="actions" role="group" aria-label="View"><button id="visual" class="active">Visual</button><button id="source">Source</button><button id="changes">Changes</button></div><select id="size" aria-label="Preview width"><option value="100%">Fit preview</option><option value="1440px">1440px</option><option value="1024px">1024px</option><option value="390px">390px</option><option value="320px">320px</option></select></div>
+      <div class="canvas" id="canvas"><iframe id="preview" sandbox="allow-same-origin" referrerpolicy="no-referrer" title="Gutenberg page preview"></iframe></div>
+      <textarea id="sourceView" aria-label="Gutenberg source (read-only)" readonly hidden spellcheck="false"></textarea>
+      <section id="diff" hidden><h2>Source changes</h2><p id="changeSummary"></p><h3>Original range</h3><pre id="before"></pre><h3>Current range</h3><pre id="after"></pre></section>
+      <div class="footer"><span id="status" role="status">Ready</span><button id="previewExport">Download HTML preview</button></div>
+    </section>
+    <aside class="inspector"><h2>Edit text</h2><p id="selection" class="help">Click text in a Custom HTML block to select a source range.</p><label for="text">Selected text</label><textarea id="text" rows="7" disabled></textarea><button id="apply" class="primary" disabled>Apply text change</button><button id="cancel" disabled>Discard text change</button><p class="help">Text edits preserve surrounding tags, attributes, styles, scripts and block markers. Layout and structural editing are not available in this version.</p><h2>Source checks <span id="validationSummary"></span></h2><div id="validation" aria-live="polite"></div><p class="help">This preview does not include your WordPress theme or resolve shared blocks. Scripts are disabled. Check the exported source in WordPress before publishing.</p></aside>
+  </main>
+  <input type="file" id="file" accept=".html,.htm,.txt,text/html,text/plain" hidden>
+  <dialog id="pasteDialog"><form method="dialog"><h2>Paste Gutenberg source</h2><p>Copy the full page from WordPress’s Code editor. Importing replaces the open draft.</p><textarea id="pasteText" aria-label="Paste Gutenberg source" rows="14" spellcheck="false"></textarea><div class="actions"><button value="cancel">Cancel</button><button id="importPaste" type="button" class="primary">Import source</button></div></form></dialog>
+</body>
+</html>
