@@ -1,15 +1,22 @@
 (() => {
   'use strict';
   const G = window.GutenbergSource;
+  const UI = window.EditorUI;
   const $ = id => document.getElementById(id);
   const storageKey = 'markup-studio-gutenberg-v1';
   const example = '<!-- wp:html -->\n<style>\n.demo{font-family:system-ui,sans-serif;max-width:760px;margin:auto;padding:64px 32px;color:#20232c}.demo h1{font-size:46px;letter-spacing:-2px}.demo p{font-size:19px;line-height:1.7}\n</style>\n<section class="demo">\n<h1>Your Gutenberg source, preserved.</h1>\n<p>Open a WordPress dump or paste the full page from the Code editor. Click this sentence to try a text edit.</p>\n<p>Tags, styles and Gutenberg block boundaries stay intact.</p>\n</section>\n<!-- /wp:html -->\n';
   let original = example, current = example, model, history = [example], position = 0;
   let selected = null, selectedValue = '', pending = false, view = 'visual', imported = false;
   let savedSignature = '', marker = '', renderedTexts = new Map(), mappedNodes = new WeakMap(), highlight = null;
+  let inline = null, scrollPosition = null;
   const frame = $('preview');
   const message = text => { $('status').textContent = text; };
   const signature = () => JSON.stringify([original, current, $('filename').value]);
+  function decodeText(text) { const decoder = document.createElement('textarea'); decoder.innerHTML = text; return decoder.value; }
+  function endInline() {
+    if (!inline) return;
+    inline.element.replaceWith(inline.node); inline = null;
+  }
   function filename(suffix = '') {
     const name = $('filename').value.trim().replace(/[\\/:*?"<>|\x00-\x1f]/g, '-') || 'wordpress-page.html';
     return name.replace(/\.(?:html?|txt)$/i, '') + suffix + '.html';
@@ -30,21 +37,59 @@
     if (pending) message('Text change pending — apply or discard it before saving or exporting.');
   }
   function discardSelection() {
+    endInline();
     highlight?.removeAttribute('data-gb-editor-selected'); highlight = null;
     selected = null; selectedValue = ''; $('text').value = ''; $('text').disabled = true;
-    $('selection').textContent = 'Click text in a Custom HTML block to select a source range.';
+    $('selection').textContent = model.errors.length ? 'Editing is locked because this source has errors. Import the WordPress Code editor source and review Source checks below.' : 'Double-click preview text, or choose a text passage above.';
+    $('passage').value = ''; $('editInline').disabled = true;
     checkPending();
   }
   function selectText(id, node) {
-    if (pending && !confirm('Discard the pending text change?')) return;
+    if (pending && !confirm('Discard the pending text change?')) return false;
     discardSelection();
+    node ||= {data: decodeText(model.texts[id].raw), parentElement: null};
     selected = model.texts[id]; selectedValue = node.data.replace(/\r\n?/g, '\n');
     $('text').value = selectedValue; $('text').disabled = false;
     $('selection').textContent = 'Custom HTML block ' + (selected.blockId + 1) + ' · source line ' + lineAt(selected.start);
     highlight = node.parentElement;
     highlight?.setAttribute('data-gb-editor-selected', '');
+    $('passage').value = String(id); $('editInline').disabled = !renderedTexts.has(id);
     document.querySelectorAll('.block').forEach(b => b.classList.toggle('active', Number(b.dataset.block) === selected.blockId));
     checkPending();
+    return true;
+  }
+  function beginInline(id = selected?.id) {
+    if (id === undefined || model.errors.length) return message('Choose supported Custom HTML text first. Check Source checks if editing is blocked.');
+    if (inline?.id === id) { inline.element.focus(); return; }
+    if (selected?.id !== id && !selectText(id, renderedTexts.get(id))) return;
+    const node = renderedTexts.get(id);
+    if (!node?.isConnected) return message('This passage can be edited in the text panel. It cannot be mapped to the preview.');
+    const element = node.ownerDocument.createElement('span');
+    element.setAttribute('contenteditable', 'plaintext-only'); element.setAttribute('data-gb-inline', '');
+    element.setAttribute('aria-label', 'Edit selected text'); element.style.whiteSpace = 'pre-wrap';
+    element.textContent = $('text').value; node.replaceWith(element); inline = {element, node, id};
+    element.addEventListener('input', () => { $('text').value = element.innerText.replace(/\r\n?/g, '\n'); checkPending(); });
+    element.focus();
+    const range = node.ownerDocument.createRange(); range.selectNodeContents(element);
+    const selection = node.ownerDocument.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    message('Editing on canvas · Ctrl/Cmd+Enter to apply · Escape to cancel.');
+  }
+  function applyText() {
+    if (!pending || selected === null) { endInline(); return true; }
+    try { commit(G.patchText(current, selected, $('text').value, decodeText)); return true; }
+    catch (e) { message(e.message); return false; }
+  }
+  function cancelText() {
+    endInline(); $('text').value = selectedValue; checkPending(); message('Pending text change discarded.');
+  }
+  function textIdAt(e) {
+    const doc = e.target.ownerDocument;
+    if (inline?.element.contains(e.target)) return inline.id;
+    const caret = doc.caretPositionFromPoint?.(e.clientX, e.clientY);
+    const range = caret ? null : doc.caretRangeFromPoint?.(e.clientX, e.clientY);
+    const node = caret?.offsetNode || range?.startContainer;
+    const id = node && e.target.contains(node) ? mappedNodes.get(node) : undefined;
+    return id ?? [...renderedTexts].find(([, text]) => e.target.contains(text))?.[0];
   }
   function renderChecks() {
     $('validation').replaceChildren();
@@ -62,6 +107,9 @@
   }
   function renderBlocks() {
     $('blocks').replaceChildren();
+    $('passage').replaceChildren(new Option('Choose text to edit…', ''));
+    $('passage').disabled = model.errors.length > 0;
+    for (const text of model.texts) $('passage').append(new Option('Block ' + (text.blockId + 1) + ' · ' + decodeText(text.raw).trim().replace(/\s+/g, ' ').slice(0, 80), text.id));
     for (const block of model.blocks) {
       const button = document.createElement('button'); button.className = 'block'; button.dataset.block = block.id;
       const title = document.createElement('span'); title.textContent = (block.id + 1) + '. ' + block.name;
@@ -69,11 +117,11 @@
       detail.textContent = block.name === 'core/html' && !block.selfClosing ? 'Custom HTML · text edits' : block.name === 'core/block' ? 'Shared block reference · preserved' : 'Read-only · preserved';
       button.append(title, detail);
       button.addEventListener('click', () => {
-        const text = model.texts.find(t => t.blockId === block.id && renderedTexts.has(t.id));
+        const text = model.texts.find(t => t.blockId === block.id);
         if (model.errors.length) return message('Source has errors. Export and visual editing are blocked; download the original for recovery.');
         if (text) {
           selectText(text.id, renderedTexts.get(text.id));
-          if (selected?.id === text.id) renderedTexts.get(text.id).parentElement?.scrollIntoView({block: 'center'});
+          if (selected?.id === text.id) renderedTexts.get(text.id)?.parentElement?.scrollIntoView({block: 'center'});
         } else {
           if (!pending) discardSelection();
           message(detail.textContent + '. No editable rendered text in this block.');
@@ -96,6 +144,8 @@
     return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\' https:; img-src https: data:; font-src https: data:; script-src \'none\'; form-action \'none\'; base-uri \'none\'"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + source + '</body></html>';
   }
   function render() {
+    UI.close();
+    scrollPosition = frame.contentDocument?.scrollingElement ? {x: frame.contentWindow.scrollX, y: frame.contentWindow.scrollY} : null;
     model = G.analyze(current); discardSelection(); renderChecks(); renderBlocks(); renderDiff();
     $('sourceView').value = current;
     $('undo').disabled = position === 0; $('redo').disabled = position === history.length - 1;
@@ -116,24 +166,25 @@
         renderedTexts.set(id, text); mappedNodes.set(text, id);
       }
     }
-    const style = doc.createElement('style'); style.textContent = '[data-gb-editor-selected]{outline:2px solid #635bff!important;outline-offset:3px!important}'; doc.head.append(style);
+    const style = doc.createElement('style'); style.textContent = '[data-gb-editor-selected]{outline:2px solid #635bff!important;outline-offset:3px!important}[data-gb-inline]{outline:2px solid #0e956b!important;cursor:text!important}'; doc.head.append(style);
+    if (scrollPosition) frame.contentWindow.scrollTo(scrollPosition.x, scrollPosition.y);
     doc.addEventListener('click', e => {
+      if (inline?.element.contains(e.target)) return;
       if (e.target.closest('a,button,input,select,textarea,label,summary')) e.preventDefault();
-      if (model.errors.length) return;
-      const caret = doc.caretPositionFromPoint?.(e.clientX, e.clientY);
-      const range = caret ? null : doc.caretRangeFromPoint?.(e.clientX, e.clientY);
-      const node = caret?.offsetNode || range?.startContainer;
-      let id = node && e.target.contains(node) ? mappedNodes.get(node) : undefined;
-      if (id === undefined) {
-        const match = [...renderedTexts].find(([, text]) => e.target.contains(text));
-        if (match) id = match[0];
-      }
+      if (model.errors.length) return message('Editing is blocked by source errors. See Source checks for the affected lines.');
+      const id = textIdAt(e);
       if (id !== undefined) selectText(id, renderedTexts.get(id));
       else {
         if (!pending) discardSelection();
         message('This area has no supported Custom HTML text. Its source is preserved read-only.');
       }
     }, true);
+    doc.addEventListener('dblclick', e => {
+      if (inline?.element.contains(e.target)) return;
+      const id = textIdAt(e);
+      if (id !== undefined) { e.preventDefault(); beginInline(id); }
+    }, true);
+    UI.bind(doc, contextMenu);
     doc.addEventListener('submit', e => e.preventDefault(), true);
     doc.addEventListener('keydown', shortcut, true);
   });
@@ -148,26 +199,62 @@
     $('filename').value = name || 'wordpress-page.html'; render(); return true;
   }
   function save() {
-    if (pending) return message('Apply or discard the pending text change before saving.');
+    if (pending) { message('Apply or discard the pending text change before saving.'); return false; }
     try {
       localStorage.setItem(storageKey, JSON.stringify({original, source: current, name: $('filename').value}));
       savedSignature = signature();
       message('Draft and original saved in this browser' + (model.errors.length ? ' · source errors remain; export blocked' : ''));
-    } catch { message('Browser save failed. Storage may be unavailable or full. Download your source or original backup.'); }
+      return true;
+    } catch { message('Browser save failed. Storage may be unavailable or full. Download your source or original backup.'); return false; }
   }
   function shortcut(e) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+    if (inline && e.key === 'Escape') { e.preventDefault(); cancelText(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); applyText(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if ((!inline || applyText())) save(); }
   }
-  $('apply').addEventListener('click', () => {
-    if (!pending || selected === null) return;
-    try {
-      const decoder = document.createElement('textarea');
-      const decode = text => { decoder.innerHTML = text; return decoder.value; };
-      commit(G.patchText(current, selected, $('text').value, decode));
-    } catch (e) { message(e.message); }
+  $('apply').addEventListener('click', applyText);
+  $('cancel').addEventListener('click', cancelText);
+  $('text').addEventListener('input', () => { if (inline) inline.element.textContent = $('text').value; checkPending(); });
+  $('editInline').addEventListener('click', () => beginInline());
+  $('passage').addEventListener('change', () => {
+    if ($('passage').value === '') return;
+    const id = Number($('passage').value);
+    if (selectText(id, renderedTexts.get(id))) { $('text').focus(); $('text').select(); }
+    else $('passage').value = String(selected?.id ?? '');
   });
-  $('cancel').addEventListener('click', () => { $('text').value = selectedValue; checkPending(); message('Pending text change discarded.'); });
-  $('text').addEventListener('input', checkPending);
+  function switchEditor() { if (applyText() && save()) location.href = 'index.html'; }
+  $('switchEditor').addEventListener('click', switchEditor);
+  function contextMenu(e) {
+    if (e.target.closest('.editor-menu')) { e.preventDefault(); return; }
+    const isPreview = e.target.ownerDocument === frame.contentDocument;
+    const textActions = UI.textActions(e.target, message);
+    if (isPreview && !textActions && !model.errors.length && !pending) {
+      const id = textIdAt(e);
+      if (id !== undefined) selectText(id, renderedTexts.get(id));
+      else discardSelection();
+    }
+    const blockButton = e.target.closest('.block');
+    if (blockButton && !pending && !model.errors.length) {
+      const token = model.texts.find(t => t.blockId === Number(blockButton.dataset.block));
+      if (token) selectText(token.id, renderedTexts.get(token.id)); else discardSelection();
+    }
+    const items = [
+      ...(textActions ? [...textActions, null] : []),
+      {label: 'Edit text on canvas', disabled: !selected || model.errors.length || !renderedTexts.has(selected.id), run: () => beginInline()},
+      {label: 'Edit text in panel', disabled: !selected || model.errors.length, run: () => { $('text').scrollIntoView({block: 'center'}); $('text').focus(); $('text').select(); }},
+      {label: 'Apply text change', disabled: !pending, run: applyText},
+      {label: 'Discard text change', disabled: !pending && !inline, run: cancelText},
+      null,
+      {label: 'Undo', disabled: $('undo').disabled, run: () => $('undo').click()},
+      {label: 'Redo', disabled: $('redo').disabled, run: () => $('redo').click()},
+      {label: 'Review source changes', run: () => $('changes').click()},
+      {label: 'Save in browser', disabled: pending && !inline, run: () => { if (!inline || applyText()) save(); }},
+      {label: 'Export Gutenberg source', disabled: $('export').disabled, run: () => $('export').click()},
+      null, {label: 'Switch to HTML editor', run: switchEditor}
+    ];
+    UI.show(e, items, selected ? 'Gutenberg text actions' : 'Gutenberg actions · text selection required');
+  }
+  UI.bind(document, contextMenu);
   $('undo').addEventListener('click', () => {
     if (!position || (pending && !confirm('Discard the pending text change?'))) return;
     current = history[--position]; render();

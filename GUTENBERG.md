@@ -1,7 +1,7 @@
 # Gutenberg editor
 
-Open `editors.html` to choose either editor, or `gutenberg.html` for the separate Gutenberg editor. `index.html` remains the
-standard HTML editor, unchanged. Both are static pages served by GitHub Pages or
+Open `editors.html` to choose either editor, or `gutenberg.html` for the separate
+Gutenberg editor. `index.html` is the standard HTML editor. Both are static pages served by GitHub Pages or
 any static server; no installation or build is required.
 
 For local development:
@@ -15,9 +15,11 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory /workspace/HTML_EDITOR
 1. Open a UTF-8 Gutenberg dump (`.html`, `.htm`, or `.txt`), or paste the full
    source from WordPress's Code editor. This is block source, not a published
    page's browser HTML. No automatic repairs are made on import.
-2. Select a Custom HTML block or click its rendered text. Edit the selected text
-   in the inspector and apply the change. Pending edits must be applied or
-   discarded before export or browser save.
+2. Double-click text in a Custom HTML block to type directly on the canvas.
+   Ctrl/Cmd+Enter or Apply text change commits it; Escape cancels. Alternatively,
+   select a Text passage in the inspector and edit it there. Pending edits must
+   be applied or discarded before export. Ctrl/Cmd+S applies active canvas edits
+   and saves the browser draft.
 3. Review Source checks and Changes. Export Gutenberg source and paste it back
    into WordPress's Code editor. Check the page in the target WordPress editor
    and theme before publishing.
@@ -34,6 +36,19 @@ same origin. Browser storage can be cleared or run out of space; download an
 original backup for durable recovery. Undo/redo works during the session; after
 reloading a saved draft, the original and current draft remain available, but the
 intermediate undo history does not. Restore original is undoable.
+
+Both editors have a Switch editor button. Switching saves the current editor's
+draft and opens the other editor's separate draft; it does not convert between
+HTML and Gutenberg formats. Pending Gutenberg text changes are applied before
+switching. If browser storage fails, switching stops and leaves the editor open.
+
+Right-click the preview, outline or editor panels for context actions. The HTML
+editor supports editing, duplicating, moving, deleting and inserting elements.
+Gutenberg offers source-preserving text actions, undo/redo, change review and
+export; unsupported structural actions are omitted. Text fields have copy, cut,
+paste and select-all actions. Clipboard permissions may require using the
+Ctrl/Cmd+C/V keyboard shortcuts instead. Menus close on Escape, outside click,
+scroll or resize, and support arrow-key navigation.
 
 ## First-version scope
 
@@ -65,6 +80,7 @@ intermediate undo history does not. Restore original is undoable.
 ```sh
 node tests/gutenberg.test.cjs
 python3 tests/gutenberg-browser.py
+python3 tests/editor-interactions.py
 ```
 
 Browser tests require Python Playwright and `/usr/bin/chromium`, available in the
@@ -78,4 +94,5 @@ python3 tests/gutenberg-browser.py --valid /path/to/repaired.txt --damaged /path
 The tests cover exact source round trips, bounded text patches, entity and line
 ending preservation, markup escaping, shared/plugin/native block preservation,
 blocked invalid imports, disposable-preview contamination, browser persistence,
-undo/restore and separate preview exports.
+undo/restore, separate preview exports, direct canvas edits, context actions,
+clipboard controls and switching between separately saved drafts.
